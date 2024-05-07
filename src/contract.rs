@@ -9,13 +9,15 @@ use cosmwasm_std::{
     Env,
     MessageInfo,
     Order,
+    QueryRequest,
     Response,
     StdError,
     StdResult,
     Uint128,
+    WasmQuery,
 };
 use cw2::set_contract_version;
-use cw721::Cw721ReceiveMsg;
+use cw721::{ Cw721QueryMsg, Cw721ReceiveMsg, OwnerOfResponse };
 use crate::{
     msg::{ ExecuteMsg, InstantiateMsg, NftReceiveMsg, QueryMsg, RerollData },
     state::{ Config, Reroll, CONFIG, REROLL_INFO },
@@ -59,6 +61,8 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: ExecuteMsg) -> S
             update_config(deps, info, admin, enabled, roll_fees, denom),
         ExecuteMsg::CreateReroll { nft_id } => create_roll(deps, env, info, nft_id),
         ExecuteMsg::ReceiveNft(wrapper) => execute_receive_nft(deps, info, wrapper),
+        ExecuteMsg::Withdraw { denom, is_cw20, amount, address } =>
+            withdraw(deps, env, info, denom, is_cw20, amount, address),
     }
 }
 
@@ -99,9 +103,27 @@ fn create_roll(deps: DepsMut, env: Env, info: MessageInfo, nft_id: String) -> St
     if !config.enabled {
         return Err(StdError::generic_err("Reroll not enabled"));
     }
+
+    let msg = to_json_binary(
+        &(Cw721QueryMsg::OwnerOf { token_id: nft_id.clone(), include_expired: None })
+    )?;
+
+    let owner_response: OwnerOfResponse = deps.querier.query(
+        &QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: config.collection_address.to_string().clone(),
+            msg,
+        })
+    )?;
+
+    if owner_response.owner.clone() != info.sender.to_string().clone() {
+        return Err(StdError::generic_err("You're not the owner"));
+    }
+
     let found = REROLL_INFO.load(deps.storage, nft_id.clone());
     if found.is_ok() {
-        return Err(StdError::generic_err("Nft already rerolled"));
+        if found.unwrap().rerolled {
+            return Err(StdError::generic_err("Nft already rerolled"));
+        }
     }
 
     if info.funds[0].denom != config.denom || info.funds[0].amount != config.roll_fees {
@@ -162,7 +184,7 @@ fn execute_receive_nft(
 
             let msg = transfer_token_message(
                 config.collection_address.clone().to_string(),
-                "cw20".to_string(),
+                true,
                 Uint128::from(u64::pow(10, config.decimals as u32)),
                 reroll.sender.clone()
             )?;
@@ -170,13 +192,39 @@ fn execute_receive_nft(
             REROLL_INFO.save(deps.storage, wrapper.token_id.clone(), &reroll)?;
             Ok(
                 Response::default()
-                    .add_attribute("action", "execute reroll")
+                    .add_attribute("action", "execute_reroll")
                     .add_attribute("collection_address", config.collection_address)
                     .add_attribute("nft_id", wrapper.token_id)
                     .add_message(msg)
             )
         }
     }
+}
+
+fn withdraw(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    denom: String,
+    is_cw20: bool,
+    amount: Uint128,
+    receiver: Addr
+) -> StdResult<Response> {
+    let config = CONFIG.load(deps.storage)?;
+
+    if info.sender.clone() != config.admin {
+        return Err(StdError::generic_err("Unauthorized"));
+    }
+
+    let transfer_tokens = transfer_token_message(denom.clone(), is_cw20, amount, receiver)?;
+
+    Ok(
+        Response::default()
+            .add_message(transfer_tokens)
+            .add_attribute("action", "execute_withdraw")
+            .add_attribute("denom", denom)
+            .add_attribute("amount", amount)
+    )
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

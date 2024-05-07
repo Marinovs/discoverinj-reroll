@@ -25,6 +25,12 @@ pub enum ExecuteMsg {
         nft_id: String,
     },
     ReceiveNft(Cw721ReceiveMsg),
+    Withdraw {
+        denom: String,
+        is_cw20: bool,
+        amount: Uint128,
+        address: Addr,
+    },
 }
 
 #[cw_serde]

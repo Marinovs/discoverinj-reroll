@@ -1,0 +1,1 @@
+2f19cb1880eb82cd7c18d2078e5f209cbbb8cc823349b862e3222d047fda4a96  nftroll-aarch64.wasm

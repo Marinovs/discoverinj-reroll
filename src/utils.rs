@@ -3,11 +3,11 @@ use cw20::Cw20ExecuteMsg;
 
 pub fn transfer_token_message(
     denom: String,
-    token_type: String,
+    is_cw20: bool,
     amount: Uint128,
     receiver: Addr
 ) -> StdResult<CosmosMsg> {
-    if token_type == "native" {
+    if !is_cw20 {
         Ok(
             (BankMsg::Send {
                 to_address: receiver.clone().into(),
