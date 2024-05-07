@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use cosmwasm_std::{
     entry_point,
     from_json,
@@ -19,7 +21,7 @@ use cosmwasm_std::{
 use cw2::set_contract_version;
 use cw721::{ Cw721QueryMsg, Cw721ReceiveMsg, OwnerOfResponse };
 use crate::{
-    msg::{ ExecuteMsg, InstantiateMsg, NftReceiveMsg, QueryMsg, RerollData },
+    msg::{ ExecuteMsg, InstantiateMsg, NftReceiveMsg, QueryMsg },
     state::{ Config, Reroll, CONFIG, REROLL_INFO },
     utils::transfer_token_message,
 };
@@ -95,6 +97,8 @@ fn update_config(
         config.denom = denom.unwrap();
     }
 
+    CONFIG.save(deps.storage, &config)?;
+
     Ok(Response::default())
 }
 
@@ -121,12 +125,14 @@ fn create_roll(deps: DepsMut, env: Env, info: MessageInfo, nft_id: String) -> St
 
     let found = REROLL_INFO.load(deps.storage, nft_id.clone());
     if found.is_ok() {
-        if found.unwrap().rerolled {
-            return Err(StdError::generic_err("Nft already rerolled"));
-        }
+        return Err(StdError::generic_err("Nft already rerolled"));
     }
 
-    if info.funds[0].denom != config.denom || info.funds[0].amount != config.roll_fees {
+    if
+        info.funds.is_empty() ||
+        info.funds[0].denom != config.denom ||
+        info.funds[0].amount != config.roll_fees
+    {
         return Err(StdError::generic_err("Payment failed"));
     }
 
@@ -235,23 +241,22 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     }
 }
 
-fn query_rerolls(deps: Deps) -> StdResult<Binary> {
-    let mut rerolls: Vec<RerollData> = vec![];
+fn query_rerolls(deps: Deps) -> StdResult<HashMap<String, Reroll>> {
+    let mut rerolls: HashMap<String, Reroll> = HashMap::new();
 
-    // Collect all rerolls into a vector
+    // Collect all rerolls into a hashmap
     for item in REROLL_INFO.range(deps.storage, None, None, Order::Ascending) {
         let (key, value) = item?;
         let key_str = String::from_utf8(key.into()).map_err(|_|
             StdError::generic_err("Invalid UTF-8 key")
         )?;
-        rerolls.push(RerollData { id: key_str, reroll: value });
+        rerolls.insert(key_str, value);
     }
 
-    // Serialize the vector of rerolls to binary
-    to_json_binary(&rerolls)
+    return Ok(rerolls);
 }
 
-fn query_user_rerolls(deps: Deps, address: Addr) -> StdResult<Binary> {
+fn query_user_rerolls(deps: Deps, address: Addr) -> StdResult<Vec<Reroll>> {
     let rerolls: Vec<Reroll> = REROLL_INFO.range(deps.storage, None, None, Order::Ascending)
         .filter_map(|item| {
             item.ok().and_then(|(_, reroll)| {
@@ -260,5 +265,5 @@ fn query_user_rerolls(deps: Deps, address: Addr) -> StdResult<Binary> {
         })
         .collect();
 
-    to_json_binary(&rerolls)
+    Ok(rerolls)
 }
